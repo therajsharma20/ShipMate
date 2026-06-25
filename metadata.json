@@ -1,0 +1,6 @@
+{
+  "name": "Blank Full-Stack App",
+  "description": "A clean, blank full-stack React and Express application with a basic API route.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
