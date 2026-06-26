@@ -8,24 +8,24 @@ const ai = new GoogleGenAI({});
 
 async function startServer() {
   const app = express();
-
   app.use(express.json());
 
   app.post("/api/chat", async (req, res) => {
     try {
       const { message } = req.body;
       let calendarStatus = "Processing...";
+      
+      // Initialize context variables at the top of the scope
+      let busySchedule = "User has no upcoming events in the next 24 hours.";
+      let upcomingContext = "No immediate events found.";
 
-      // 🕵️‍♂️ 1. BULLETPROOF AUTHENTICATION BLOCK
+      // 🕵️‍♂️ 1. AUTHENTICATION
       let authClient;
       let calendar;
       try {
         const rawSecret = process.env.GOOGLE_CREDENTIALS || '{}';
         const credentials = JSON.parse(rawSecret);
-
-        // Force exactly correct newline formatting for the PEM key
-        let safeKey = credentials.private_key || '';
-        safeKey = safeKey.split('\\n').join('\n');
+        let safeKey = credentials.private_key?.split('\\n').join('\n') || '';
 
         const auth = new google.auth.GoogleAuth({
           credentials: {
@@ -38,110 +38,84 @@ async function startServer() {
         authClient = await auth.getClient();
         calendar = google.calendar({ version: 'v3', auth: authClient as any });
       } catch (authError: any) {
-        console.error("Critical Auth Setup Error:", authError);
-        calendarStatus = "Failed to configure Google Auth. Check Secret JSON.";
+        console.error("Auth Setup Error:", authError);
       }
 
-      // 📅 2. FETCH EVENTS (Fails gracefully if Auth is broken)
-      let busySchedule = "User has no upcoming events.";
+      // 🕵️‍♂️ 2. CONTEXT FETCHING
       if (calendar) {
-        const now = new Date();
-        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         try {
-          const eventsRes = await calendar.events.list({
-            calendarId: 'therajsharma.20@gmail.com',
-            timeMin: now.toISOString(),
-            timeMax: tomorrow.toISOString(),
-            singleEvents: true,
-            orderBy: 'startTime',
-          });
-          const events = eventsRes.data.items || [];
-          if (events.length > 0) {
-            busySchedule = events.map((e: any) => 
-              `- ${e.summary}: from ${e.start?.dateTime} to ${e.end?.dateTime}`
-            ).join('\n');
+          const now = new Date();
+          const dayAhead = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          const twoHoursAhead = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+          const [events24h, events2h] = await Promise.all([
+            calendar.events.list({ calendarId: 'therajsharma.20@gmail.com', timeMin: now.toISOString(), timeMax: dayAhead.toISOString(), singleEvents: true, orderBy: 'startTime' }),
+            calendar.events.list({ calendarId: 'therajsharma.20@gmail.com', timeMin: now.toISOString(), timeMax: twoHoursAhead.toISOString(), singleEvents: true, orderBy: 'startTime' })
+          ]);
+
+          if (events24h.data.items?.length) {
+            busySchedule = events24h.data.items.map(e => `- ${e.summary}: ${new Date(e.start?.dateTime!).toLocaleTimeString()}`).join('\n');
           }
-        } catch (readError) {
-          console.log("Could not read calendar, assuming open schedule.");
+          if (events2h.data.items?.length) {
+            upcomingContext = events2h.data.items.map(e => `- ${e.summary} at ${new Date(e.start?.dateTime!).toLocaleTimeString()}`).join('\n');
+          }
+        } catch (e) {
+          console.log("Calendar fetch skipped.");
         }
       }
 
-      // 🧠 3. GEMINI AI LOGIC (WITH AUTOMATIC OVERLOAD FALLBACK)
+      // 🧠 3. GEMINI AI LOGIC
       let response: any;
-      const fallbackChain = [
-        'gemini-3.5-flash',      // First choice: The newest frontier model
-        'gemini-3.1-flash-lite', // Backup 1: The ultra-fast, high-volume workhorse
-        'gemini-2.5-flash'       // Backup 2: The stable, older generation
-      ];
+      const fallbackChain = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
       
       for (const currentModel of fallbackChain) {
         try {
-          console.log(`Attempting generation with: ${currentModel}...`);
           response = await ai.models.generateContent({
             model: currentModel, 
             contents: message,
             config: {
-              systemInstruction: `You are an elite, proactive productivity assistant. Your goal is to ensure the user never misses a deadline. 
+              systemInstruction: `You are an elite, proactive productivity assistant. 
               
               CRITICAL SCHEDULING RULES:
-              1. The user's current local time is: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })}.
-              2. NEVER schedule blocks between 10:00 PM and 8:00 AM.
-              3. 🚨 CONFLICT AVOIDANCE: Here is the user's existing schedule for the next 24 hours:\n${busySchedule}\n
-              You MUST read this schedule. If your planned focus block overlaps with any of these existing events, you must autonomously search for the next available gap and schedule it there instead. Do NOT double-book the user.
-              4. Output start_time and end_time using the explicit Indian Standard Time offset like this: 'YYYY-MM-DDTHH:mm:ss+05:30'. Do NOT use 'Z' (UTC).
+              1. Local Time: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })}.
+              2. DO NOT schedule between 10:00 PM and 8:00 AM.
+              3. CONFLICT AVOIDANCE: Current 24h schedule:\n${busySchedule}
+              4. IMMEDIATE CONTEXT: Upcoming next 2h events:\n${upcomingContext}
+              Warn the user if their request clashes with an immediate event.
+              5. Output format: 'YYYY-MM-DDTHH:mm:ss+05:30'.
               
-              CRITICAL RULE - THE BURNOUT PROTOCOL:
-              You are an emotion-aware agent. Analyze the user's prompt for signs of high stress, panic, or exhaustion.
-              If you detect high stress, you MUST trigger the schedule_productivity_block tool TWICE.
-              1. The first block must be a 20-minute "Mandatory Decompression (Walk/Nap)" scheduled immediately.
-              2. The second block must be the actual deep-work session, scheduled to start right after the decompression block.`,
+              BURNOUT PROTOCOL: If stress is detected, trigger 'schedule_productivity_block' TWICE (Decompression first, then Deep Work).`,
               
               temperature: 0.7,
               tools: [{
-                functionDeclarations: [
-                  {
-                    name: "schedule_productivity_block",
-                    description: "Call this tool autonomously to schedule focus time.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        title: { type: Type.STRING, description: "Clear title of the focus session" },
-                        start_time: { type: Type.STRING, description: "Start time string in ISO format" },
-                        end_time: { type: Type.STRING, description: "End time string in ISO format" },
-                        priority_level: { type: Type.STRING, description: "'HIGH', 'MEDIUM', or 'CRITICAL'" }
-                      },
-                      required: ["title", "start_time", "end_time", "priority_level"]
-                    }
+                functionDeclarations: [{
+                  name: "schedule_productivity_block",
+                  description: "Schedule focus time.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      start_time: { type: Type.STRING },
+                      end_time: { type: Type.STRING },
+                      priority_level: { type: Type.STRING }
+                    },
+                    required: ["title", "start_time", "end_time", "priority_level"]
                   }
-                ]
+                }]
               }]
             }
           });
-          
-          console.log(`Success! ${currentModel} handled the request.`);
-          break; // The request succeeded, break out of the fallback loop!
-
-        } catch (apiError: any) {
-          console.warn(`[WARNING] ${currentModel} failed:`, apiError.message);
-          
-          if (currentModel === fallbackChain[fallbackChain.length - 1]) {
-            throw new Error("All backup models are currently overloaded. Please try again in 5 minutes.");
-          }
-        }
+          break;
+        } catch (e) { continue; }
       }
 
-      // 🎯 THE FIX: Safely extract variables AFTER the loop finishes successfully
+      // ⚡ 4. EXECUTION
       const functionCalls = response?.functionCalls || [];
-      const responseText = response?.text || "Calendar task processed successfully.";
-      
-      // ⚡ 4. EXECUTE CALENDAR INJECTION
-      if (!calendar) {
-         calendarStatus = "Calendar execution failed: Backend container auth handshake dropped.";
-      } else {
+      if (calendar && functionCalls.length > 0) {
         for (const call of functionCalls) {
           if (call.name === "schedule_productivity_block") {
             try {
-              const result = await calendar.events.insert({
+              await calendar.events.insert({
                 calendarId: 'therajsharma.20@gmail.com', 
                 requestBody: {
                   summary: `🔥 [${call.args.priority_level}] ${call.args.title}`,
@@ -150,26 +124,15 @@ async function startServer() {
                   colorId: '11', 
                 },
               });
-              if (result.data.id) {
-                 calendarStatus = "Successfully injected into Google Calendar!";
-              }
-            } catch (calError: any) {
-              console.error("Calendar Write Error:", calError.message);
-              calendarStatus = `Calendar execution failed: ${calError.message}`;
-            }
+              calendarStatus = "Successfully injected into Google Calendar!";
+            } catch (e) { calendarStatus = "Calendar write error."; }
           }
         }
       }
 
-      res.json({
-        text: responseText,
-        functionCalls: functionCalls,
-        calendarStatus: calendarStatus
-      });
-
+      res.json({ text: response?.text || "Task processed.", functionCalls, calendarStatus });
     } catch (error: any) {
-      console.error("Gemini API Error:", error);
-      res.status(500).json({ error: error.message || "Failed to process request" });
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -182,12 +145,8 @@ async function startServer() {
     app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
   }
 
-  
   const PORT = process.env.PORT || 8080;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
-  });
-
+  app.listen(PORT, '0.0.0.0', () => console.log(`Server running on ${PORT}`));
 }
 
 startServer().catch((err) => console.error(err));
