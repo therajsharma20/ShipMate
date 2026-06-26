@@ -15,7 +15,9 @@ async function startServer() {
       const { message } = req.body;
       let calendarStatus = "Processing...";
       
-      // Initialize context variables at the top of the scope
+      // Track the active model for the frontend
+      let usedModel = "gemini-3.5-flash"; 
+      
       let busySchedule = "User has no upcoming events in the next 24 hours.";
       let upcomingContext = "No immediate events found.";
 
@@ -41,7 +43,7 @@ async function startServer() {
         console.error("Auth Setup Error:", authError);
       }
 
-      // 🕵️‍♂️ 2. CONTEXT FETCHING
+      // 🕵 2. CONTEXT FETCHING
       if (calendar) {
         try {
           const now = new Date();
@@ -64,7 +66,7 @@ async function startServer() {
         }
       }
 
-      // 🧠 3. GEMINI AI LOGIC
+      //  3. GEMINI AI LOGIC
       let response: any;
       const fallbackChain = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
       
@@ -105,8 +107,15 @@ async function startServer() {
               }]
             }
           });
+          
+          //  Mark the successful model
+          usedModel = currentModel;
           break;
-        } catch (e) { continue; }
+          
+        } catch (e) { 
+          console.warn(`[WARNING] ${currentModel} failed, trying next...`);
+          continue; 
+        }
       }
 
       // ⚡ 4. EXECUTION
@@ -118,7 +127,7 @@ async function startServer() {
               await calendar.events.insert({
                 calendarId: 'therajsharma.20@gmail.com', 
                 requestBody: {
-                  summary: `🔥 [${call.args.priority_level}] ${call.args.title}`,
+                  summary: ` [${call.args.priority_level}] ${call.args.title}`,
                   start: { dateTime: call.args.start_time },
                   end: { dateTime: call.args.end_time },
                   colorId: '11', 
@@ -130,8 +139,16 @@ async function startServer() {
         }
       }
 
-      res.json({ text: response?.text || "Task processed.", functionCalls, calendarStatus });
+      // Return the tracked model to the frontend UI
+      res.json({ 
+        text: response?.text || "Task processed.", 
+        functionCalls, 
+        calendarStatus,
+        modelUsed: usedModel 
+      });
+      
     } catch (error: any) {
+      console.error("Server Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
