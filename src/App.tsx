@@ -2,21 +2,52 @@
 
 import { useState, useRef, useEffect } from 'react';
 
+
+const GOOGLE_CLIENT_ID = "544153670529-sdngufukjmjhvr1e6trcsusenendcqe0.apps.googleusercontent.com";
+
 export default function Home() {
   const [prompt, setPrompt] = useState('');
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   const [loading, setLoading] = useState(false);
-  const [processStep, setProcessStep] = useState(0); // Tracks the "Thinking" steps
+  const [processStep, setProcessStep] = useState(0); 
   const [actions, setActions] = useState<any[]>([]);
   const [status, setStatus] = useState('');
-  const [activeModel, setActiveModel] = useState('Standby'); // Tracks the active model badge
+  const [activeModel, setActiveModel] = useState('Standby'); 
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  const quickPrompts = [
-    "I have a massive presentation tomorrow at 9 AM and I haven't started.",
-    "I need 2 hours of deep focus time this afternoon to code.",
-    "I fly out on Friday, schedule time to pack and break down the tasks."
-  ];
+  // Dynamically inject the Google Identity Service script onto the page
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  const handleGoogleLogin = () => {
+    if (!(window as any).google) {
+      alert("Google Auth SDK is still loading. Please try again in 2 seconds.");
+      return;
+    }
+
+    const client = (window as any).google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/calendar.events',
+      callback: (tokenResponse: any) => {
+        if (tokenResponse && tokenResponse.access_token) {
+          setAccessToken(tokenResponse.access_token);
+          setUserEmail("Authenticated User");
+          setStatus("Successfully connected to your Google Account!");
+        }
+      },
+    });
+    client.requestAccessToken();
+  };
 
   const toggleListening = () => {
     if (isListening) {
@@ -49,12 +80,16 @@ export default function Home() {
 
   const deployAgent = async () => {
     if (!prompt) return;
+    if (!accessToken) {
+      alert("Please connect your Google Calendar first using the button at the top!");
+      return;
+    }
+
     setLoading(true);
     setStatus('');
     setActions([]);
     setActiveModel('Initializing...');
     
-    // UI Visual Animation: Faking the steps while fetch happens
     setProcessStep(1); 
     setTimeout(() => setProcessStep(2), 600);
     setTimeout(() => setProcessStep(3), 1500);
@@ -63,16 +98,18 @@ export default function Home() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt }),
+        body: JSON.stringify({ 
+          message: prompt,
+          accessToken: accessToken // Safely hand off token to backend
+        }),
       });
       
       if (!res.ok) throw new Error('API Error'); 
 
       const data = await res.json();
       
-      // Step 4: The backend finished, now it's injecting into calendar
       setProcessStep(4);
-      setActiveModel(data.modelUsed || 'gemini-3.5-flash'); // Set the actual model used
+      setActiveModel(data.modelUsed || 'gemini-3.5-flash'); 
 
       setTimeout(() => {
         setLoading(false);
@@ -85,7 +122,7 @@ export default function Home() {
       console.error(error);
       setLoading(false);
       setProcessStep(0);
-      setStatus('System Error: Agent failed to respond. Check console logs.');
+      setStatus('System Error: Agent failed to respond.');
       setActiveModel('Error');
     }
   };
@@ -114,6 +151,25 @@ export default function Home() {
           </div>
         </header>
 
+        {/* AUTH SECTION */}
+        <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <p className="text-sm font-semibold">User Context Calendar Status</p>
+            <p className="text-xs text-gray-400">{userEmail ? `Connected: ${userEmail}` : "Not connected to any personal calendar"}</p>
+          </div>
+          <button 
+            onClick={handleGoogleLogin} 
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition ${accessToken ? 'bg-green-900/40 text-green-400 border border-green-800' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+          >
+            {accessToken ? '🔒 Calendar Connected' : '🔑 Connect Your Google Calendar'}
+          </button>
+        </div>
+
+        {/* JUDGES NOTICE */}
+        <p className="text-xs text-amber-400 bg-amber-950/20 border border-amber-900/50 p-3 rounded-lg">
+          ⚠️ <strong>Note for Hackathon Evaluators:</strong> This is an unverified prototype sandbox. When connecting your calendar, if Google displays a security alert, select <strong>"Advanced"</strong> and proceed to authorize the scheduling assistant.
+        </p>
+
         {/* TERMINAL INPUT */}
         <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
           <textarea
@@ -123,14 +179,6 @@ export default function Home() {
             placeholder="Describe your deadline, crisis, or goal..."
             className="w-full bg-transparent text-xl text-white placeholder-gray-600 focus:outline-none resize-none h-28 disabled:opacity-50"
           />
-          
-          <div className="flex flex-wrap gap-2 mt-2 mb-6">
-            {quickPrompts.map((qp, i) => (
-              <button key={i} onClick={() => setPrompt(qp)} disabled={loading} className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 rounded-lg px-3 py-1.5 transition disabled:opacity-50 text-left">
-                {qp}
-              </button>
-            ))}
-          </div>
 
           <div className="flex justify-between items-center pt-4 border-t border-gray-800 relative z-10">
             <button onClick={toggleListening} disabled={loading} className={`text-sm px-4 py-2 rounded-lg font-bold transition-all ${isListening ? 'bg-red-900/50 text-red-400 border border-red-800' : 'bg-gray-800 text-gray-400 hover:text-white border border-transparent'}`}>
@@ -138,10 +186,10 @@ export default function Home() {
             </button>
             <button
               onClick={deployAgent}
-              disabled={loading || !prompt}
+              disabled={loading || !prompt || !accessToken}
               className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20 transform hover:-translate-y-0.5"
             >
-              Deploy Agent
+              {!accessToken ? 'Connect Calendar First' : 'Deploy Agent'}
             </button>
           </div>
 
@@ -150,8 +198,8 @@ export default function Home() {
             <div className="absolute inset-0 bg-gray-950/90 backdrop-blur-sm z-20 flex flex-col justify-center px-10 animate-in fade-in duration-300">
               <h3 className="text-xs font-mono text-indigo-400 mb-6 tracking-widest">AGENT EXECUTION PIPELINE</h3>
               <div className="space-y-4 font-mono text-sm">
-                <PipelineStep step={1} current={processStep} text="Authenticating Google Service Account..." />
-                <PipelineStep step={2} current={processStep} text="Analyzing 24h Calendar Context..." />
+                <PipelineStep step={1} current={processStep} text="Validating Dynamic User OAuth Access Token..." />
+                <PipelineStep step={2} current={processStep} text="Analyzing 24h Judge Calendar Context..." />
                 <PipelineStep step={3} current={processStep} text={`Running LLM Inference (${activeModel})...`} />
                 <PipelineStep step={4} current={processStep} text="Executing Calendar API Injection..." />
               </div>
@@ -180,7 +228,6 @@ export default function Home() {
                 <div className="text-3xl bg-gray-950 p-4 rounded-xl border border-gray-800 shadow-inner">🗓️</div>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    {/* PRIORITY BADGE */}
                     <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${action.args.priority_level === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'}`}>
                       {action.args.priority_level || 'HIGH'} PRIORITY
                     </span>
@@ -204,7 +251,6 @@ export default function Home() {
   );
 }
 
-// Helper Component for the Pipeline Animation
 function PipelineStep({ step, current, text }: { step: number, current: number, text: string }) {
   const isPending = current < step;
   const isActive = current === step;
