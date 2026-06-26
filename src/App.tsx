@@ -162,7 +162,7 @@ export default function Home() {
         {/* STATUS BAR */}
         {status && (
           <div className={`p-4 rounded-xl border text-sm font-bold font-mono animate-in fade-in slide-in-from-bottom-2 ${status.includes('Successfully') ? 'bg-green-900/20 border-green-800/50 text-green-400' : 'bg-red-900/20 border-red-800/50 text-red-400'}`}>
-            > {status}
+            {" > "} {status}
           </div>
         )}
 
