@@ -149,8 +149,8 @@ export default function Home() {
     <div className="min-h-screen bg-gray-950 text-gray-100 font-sans p-8">
       <div className="max-w-4xl mx-auto space-y-8">
         
-        {/* HEADER & GLOBAL BADGES */}
-        <header className="border-b border-gray-800 pb-8 flex justify-between items-end">
+       {/* HEADER & GLOBAL BADGES */}
+        <header className="border-b border-gray-800 pb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <h1 className="text-5xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500 bg-clip-text text-transparent mb-2 min-w-fit leading-tight py-2">
               ShipMate Agent
@@ -158,23 +158,36 @@ export default function Home() {
             <p className="text-gray-400 text-lg">Autonomous Productivity & Calendar Execution</p>
           </div>
           
-          <div className="flex flex-col items-end gap-2">
-            {userToken ? (
-              <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider bg-green-900/30 text-green-400 px-3 py-1 rounded-full border border-green-800/50">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                Account Synced
+          {/* RIGHT SIDE: AUTH AND JURY QUICK-START NOTE */}
+          <div className="flex flex-col items-end gap-3 max-w-md w-full md:w-auto">
+            <div className="flex items-center gap-2">
+              {userToken ? (
+                <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider bg-green-900/30 text-green-400 px-3 py-1 rounded-full border border-green-800/50">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                  Account Synced
+                </span>
+              ) : (
+                <button 
+                  onClick={handleGoogleAuth}
+                  className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl transition duration-200 border border-indigo-500/30 shadow-lg shadow-indigo-900/40 whitespace-nowrap"
+                >
+                  🔑 Connect Google Calendar
+                </button>
+              )}
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-900 text-gray-400 px-3 py-1 rounded-full border border-gray-800 whitespace-nowrap">
+                Engine: {activeModel}
               </span>
-            ) : (
-              <button 
-                onClick={handleGoogleAuth}
-                className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl transition duration-200 border border-indigo-500/30 shadow-lg shadow-indigo-900/40"
-              >
-                🔑 Connect Google Calendar
-              </button>
+            </div>
+
+            {/* 💡 JURY QUICK-START NOTE PLACEMENT */}
+            {!userToken && (
+              <div className="bg-amber-950/40 border border-amber-800/60 p-4 rounded-xl text-xs font-mono text-amber-200 text-left w-full shadow-lg animate-in fade-in slide-in-from-top-2">
+                <p className="font-bold mb-1 text-amber-400 flex items-center gap-1">
+                  <span>💡</span> JURY QUICK-START NOTE:
+                </p>
+                To test live account execution, click <span className="font-bold text-white bg-amber-900/60 px-1 rounded">"Advanced"</span> → <span className="font-bold text-white bg-amber-900/60 px-1 rounded">"Go to ShipMate (unsafe)"</span> on the Google popup. This warning appears solely because this is an active hackathon sandbox.
+              </div>
             )}
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-900 text-gray-400 px-3 py-1 rounded-full border border-gray-800">
-              Engine: {activeModel}
-            </span>
           </div>
         </header>
 
