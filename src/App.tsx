@@ -14,39 +14,53 @@ export default function Home() {
   const [actions, setActions] = useState<any[]>([]);
   const [status, setStatus] = useState('');
   const [activeModel, setActiveModel] = useState('Standby'); 
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userToken, setUserToken] = useState<string | null>(null);
+  const tokenClientRef = useRef<any>(null);
 
-  // Dynamically inject the Google Identity Service script onto the page
+  const quickPrompts = [
+    "I have a massive presentation tomorrow at 9 AM and I haven't started.",
+    "I need 2 hours of deep focus time this afternoon to code.",
+    "I fly out on Friday, schedule time to pack and break down the tasks."
+  ];
+
+  // 🔐 1. LOAD GOOGLE IDENTITY SERVICE CLIENT DYNAMICALLY
   useEffect(() => {
     const script = document.createElement('script');
-    script.src = "https://accounts.google.com/gsi/client";
+    script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
+    script.onload = () => {
+      // Initialize the implicit token client picker wrapper
+      // @ts-ignore
+      tokenClientRef.current = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/calendar.events',
+        callback: (response: any) => {
+          if (response.error) {
+            setStatus(`Google Sign-In Error: ${response.error}`);
+            return;
+          }
+          if (response.access_token) {
+            setUserToken(response.access_token);
+            setStatus('Successfully connected your Google Calendar!');
+          }
+        },
+      });
+    };
     document.body.appendChild(script);
+
     return () => {
       document.body.removeChild(script);
     };
   }, []);
 
-  const handleGoogleLogin = () => {
-    if (!(window as any).google) {
-      alert("Google Auth SDK is still loading. Please try again in 2 seconds.");
+  const handleGoogleAuth = () => {
+    if (!tokenClientRef.current) {
+      alert("Google Auth client is still loading. Please try again in a brief second.");
       return;
     }
-
-    const client = (window as any).google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/calendar.events',
-      callback: (tokenResponse: any) => {
-        if (tokenResponse && tokenResponse.access_token) {
-          setAccessToken(tokenResponse.access_token);
-          setUserEmail("Authenticated User");
-          setStatus("Successfully connected to your Google Account!");
-        }
-      },
-    });
-    client.requestAccessToken();
+    // Requests access token via popup flow mechanism
+    tokenClientRef.current.requestAccessToken({ prompt: 'consent' });
   };
 
   const toggleListening = () => {
@@ -80,8 +94,8 @@ export default function Home() {
 
   const deployAgent = async () => {
     if (!prompt) return;
-    if (!accessToken) {
-      alert("Please connect your Google Calendar first using the button at the top!");
+    if (!userToken) {
+      setStatus('Action Blocked: Please connect your Google Calendar account first.');
       return;
     }
 
@@ -92,19 +106,23 @@ export default function Home() {
     
     setProcessStep(1); 
     setTimeout(() => setProcessStep(2), 600);
-    setTimeout(() => setProcessStep(3), 1500);
+    setTimeout(() => setProcessStep(3), 1300);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: prompt,
-          accessToken: accessToken // Safely hand off token to backend
-        }),
+        headers: { 
+          'Content-Type': 'application/json',
+          // Pass the freshly validated temporary User Identity Bearer token block
+          'Authorization': `Bearer ${userToken}`
+        },
+        body: JSON.stringify({ message: prompt }),
       });
       
-      if (!res.ok) throw new Error('API Error'); 
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Server Pipeline Failure');
+      }
 
       const data = await res.json();
       
@@ -116,13 +134,13 @@ export default function Home() {
         setProcessStep(0);
         setActions(data.functionCalls || []);
         setStatus(data.calendarStatus || 'Agent execution complete.');
-      }, 1200);
+      }, 1000);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setLoading(false);
       setProcessStep(0);
-      setStatus('System Error: Agent failed to respond.');
+      setStatus(`System Error: ${error.message || 'Agent failed to respond.'}`);
       setActiveModel('Error');
     }
   };
@@ -141,34 +159,24 @@ export default function Home() {
           </div>
           
           <div className="flex flex-col items-end gap-2">
-            <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider bg-green-900/30 text-green-400 px-3 py-1 rounded-full border border-green-800/50">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-              System Online
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-900/30 text-indigo-400 px-3 py-1 rounded-full border border-indigo-800/50">
+            {userToken ? (
+              <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider bg-green-900/30 text-green-400 px-3 py-1 rounded-full border border-green-800/50">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                Account Synced
+              </span>
+            ) : (
+              <button 
+                onClick={handleGoogleAuth}
+                className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl transition duration-200 border border-indigo-500/30 shadow-lg shadow-indigo-900/40"
+              >
+                🔑 Connect Google Calendar
+              </button>
+            )}
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-900 text-gray-400 px-3 py-1 rounded-full border border-gray-800">
               Engine: {activeModel}
             </span>
           </div>
         </header>
-
-        {/* AUTH SECTION */}
-        <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-4 flex justify-between items-center">
-          <div>
-            <p className="text-sm font-semibold">User Context Calendar Status</p>
-            <p className="text-xs text-gray-400">{userEmail ? `Connected: ${userEmail}` : "Not connected to any personal calendar"}</p>
-          </div>
-          <button 
-            onClick={handleGoogleLogin} 
-            className={`px-4 py-2 rounded-lg font-bold text-sm transition ${accessToken ? 'bg-green-900/40 text-green-400 border border-green-800' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
-          >
-            {accessToken ? '🔒 Calendar Connected' : '🔑 Connect Your Google Calendar'}
-          </button>
-        </div>
-
-        {/* JUDGES NOTICE */}
-        <p className="text-xs text-amber-400 bg-amber-950/20 border border-amber-900/50 p-3 rounded-lg">
-          ⚠️ <strong>Note for Hackathon Evaluators:</strong> This is an unverified prototype sandbox. When connecting your calendar, if Google displays a security alert, select <strong>"Advanced"</strong> and proceed to authorize the scheduling assistant.
-        </p>
 
         {/* TERMINAL INPUT */}
         <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
@@ -179,6 +187,19 @@ export default function Home() {
             placeholder="Describe your deadline, crisis, or goal..."
             className="w-full bg-transparent text-xl text-white placeholder-gray-600 focus:outline-none resize-none h-28 disabled:opacity-50"
           />
+          
+          <div className="flex flex-wrap gap-2 mt-2 mb-6">
+            {quickPrompts.map((qp, i) => (
+              <button key={i} onClick={() => setPrompt(qp)} disabled={loading} className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 rounded-lg px-3 py-1.5 transition disabled:opacity-50 text-left">
+                {qp}
+              </button>
+            ))}
+          </div>
+
+          {/* JURY/JUDGES USER DIRECTION NOTE */}
+          <div className="text-xs text-gray-500 font-mono mb-4 bg-gray-950/40 p-3 rounded-xl border border-gray-800/60">
+            <span className="text-amber-500 font-bold">⚠️ Note for Evaluators:</span> This application leverages isolated, real-time client authorization token exchange. Click the button to grant calendar write access permissions before running execution sequences.
+          </div>
 
           <div className="flex justify-between items-center pt-4 border-t border-gray-800 relative z-10">
             <button onClick={toggleListening} disabled={loading} className={`text-sm px-4 py-2 rounded-lg font-bold transition-all ${isListening ? 'bg-red-900/50 text-red-400 border border-red-800' : 'bg-gray-800 text-gray-400 hover:text-white border border-transparent'}`}>
@@ -186,10 +207,10 @@ export default function Home() {
             </button>
             <button
               onClick={deployAgent}
-              disabled={loading || !prompt || !accessToken}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20 transform hover:-translate-y-0.5"
+              disabled={loading || !prompt || !userToken}
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-gray-900 disabled:to-gray-900 disabled:text-gray-600 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20 transform hover:-translate-y-0.5"
             >
-              {!accessToken ? 'Connect Calendar First' : 'Deploy Agent'}
+              Deploy Agent
             </button>
           </div>
 
@@ -198,10 +219,10 @@ export default function Home() {
             <div className="absolute inset-0 bg-gray-950/90 backdrop-blur-sm z-20 flex flex-col justify-center px-10 animate-in fade-in duration-300">
               <h3 className="text-xs font-mono text-indigo-400 mb-6 tracking-widest">AGENT EXECUTION PIPELINE</h3>
               <div className="space-y-4 font-mono text-sm">
-                <PipelineStep step={1} current={processStep} text="Validating Dynamic User OAuth Access Token..." />
-                <PipelineStep step={2} current={processStep} text="Analyzing 24h Judge Calendar Context..." />
-                <PipelineStep step={3} current={processStep} text={`Running LLM Inference (${activeModel})...`} />
-                <PipelineStep step={4} current={processStep} text="Executing Calendar API Injection..." />
+                <PipelineStep step={1} current={processStep} text="Validating Google Client Identity Handshake..." />
+                <PipelineStep step={2} current={processStep} text="Parsing Authorized User Calendar Gaps..." />
+                <PipelineStep step={3} current={processStep} text={`Running Fallback AI Inference Chain...`} />
+                <PipelineStep step={4} current={processStep} text="Injecting Conflict-Free Blocks into Target Account..." />
               </div>
             </div>
           )}
@@ -209,7 +230,7 @@ export default function Home() {
 
         {/* STATUS BAR */}
         {status && (
-          <div className={`p-4 rounded-xl border text-sm font-bold font-mono animate-in fade-in slide-in-from-bottom-2 ${status.includes('Successfully') ? 'bg-green-900/20 border-green-800/50 text-green-400' : 'bg-red-900/20 border-red-800/50 text-red-400'}`}>
+          <div className={`p-4 rounded-xl border text-sm font-bold font-mono animate-in fade-in slide-in-from-bottom-2 ${status.includes('Successfully') || status.includes('connected') ? 'bg-green-900/20 border-green-800/50 text-green-400' : 'bg-indigo-900/20 border-indigo-800/50 text-blue-400'}`}>
             {" > "} {status}
           </div>
         )}
